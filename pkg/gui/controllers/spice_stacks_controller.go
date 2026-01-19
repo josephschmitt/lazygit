@@ -144,6 +144,36 @@ func (self *SpiceStacksController) GetKeybindings(opts types.KeybindingsOpts) []
 			Description: self.c.Tr.ToggleSpiceLogFormat,
 			Tooltip:     self.c.Tr.ToggleSpiceLogFormatTooltip,
 		},
+		{
+			Tag:     "navigation",
+			Key:     opts.GetKey(opts.Config.Universal.PrevPage),
+			Handler: self.HandlePrevPage,
+		},
+		{
+			Tag:     "navigation",
+			Key:     opts.GetKey(opts.Config.Universal.NextPage),
+			Handler: self.HandleNextPage,
+		},
+		{
+			Tag:     "navigation",
+			Key:     opts.GetKey(opts.Config.Universal.GotoTop),
+			Handler: self.HandleGotoTop,
+		},
+		{
+			Tag:     "navigation",
+			Key:     opts.GetKey(opts.Config.Universal.GotoBottom),
+			Handler: self.HandleGotoBottom,
+		},
+		{
+			Tag:     "navigation",
+			Key:     opts.GetKey(opts.Config.Universal.ScrollLeft),
+			Handler: self.HandleScrollLeft,
+		},
+		{
+			Tag:     "navigation",
+			Key:     opts.GetKey(opts.Config.Universal.ScrollRight),
+			Handler: self.HandleScrollRight,
+		},
 	}
 
 	return bindings
@@ -180,6 +210,14 @@ func (self *SpiceStacksController) handleLineChange(delta int) error {
 	for newIdx >= 0 && newIdx < len(items) {
 		if !items[newIdx].IsCommit {
 			self.context().SetSelection(newIdx)
+
+			// Auto-scroll to keep selection visible
+			if delta < 0 {
+				checkScrollUp(self.context().GetViewTrait(), self.c.UserConfig(), currentIdx, newIdx)
+			} else {
+				checkScrollDown(self.context().GetViewTrait(), self.c.UserConfig(), currentIdx, newIdx)
+			}
+
 			self.context().HandleFocus(types.OnFocusOpts{})
 			return nil
 		}
@@ -425,4 +463,149 @@ func (self *SpiceStacksController) require(conditions ...func() *types.DisabledR
 		}
 		return nil
 	}
+}
+
+func (self *SpiceStacksController) GetMouseKeybindings(opts types.KeybindingsOpts) []*gocui.ViewMouseBinding {
+	return []*gocui.ViewMouseBinding{
+		{
+			ViewName: self.context().GetViewName(),
+			Key:      gocui.MouseWheelUp,
+			Handler:  func(gocui.ViewMouseBindingOpts) error { return self.HandleScrollUp() },
+		},
+		{
+			ViewName: self.context().GetViewName(),
+			Key:      gocui.MouseWheelDown,
+			Handler:  func(gocui.ViewMouseBindingOpts) error { return self.HandleScrollDown() },
+		},
+		{
+			ViewName: self.context().GetViewName(),
+			Key:      gocui.MouseLeft,
+			Handler:  func(opts gocui.ViewMouseBindingOpts) error { return self.HandleClick(opts) },
+		},
+	}
+}
+
+func (self *SpiceStacksController) HandleScrollUp() error {
+	scrollHeight := self.c.UserConfig().Gui.ScrollHeight
+	self.context().GetViewTrait().ScrollUp(scrollHeight)
+	return nil
+}
+
+func (self *SpiceStacksController) HandleScrollDown() error {
+	scrollHeight := self.c.UserConfig().Gui.ScrollHeight
+	self.context().GetViewTrait().ScrollDown(scrollHeight)
+	return nil
+}
+
+func (self *SpiceStacksController) HandleClick(opts gocui.ViewMouseBindingOpts) error {
+	items := self.c.Model().SpiceStackItems
+	if len(items) == 0 {
+		return nil
+	}
+
+	newIdx := opts.Y
+	if newIdx >= len(items) {
+		return nil
+	}
+
+	// If clicked on a commit, find nearest branch
+	if items[newIdx].IsCommit {
+		// Search forward for branch
+		for i := newIdx; i < len(items); i++ {
+			if !items[i].IsCommit {
+				newIdx = i
+				break
+			}
+		}
+	}
+
+	self.context().SetSelection(newIdx)
+	self.context().HandleFocus(types.OnFocusOpts{})
+	return nil
+}
+
+func (self *SpiceStacksController) HandlePrevPage() error {
+	delta := -self.context().GetViewTrait().PageDelta()
+	return self.handlePageChange(delta)
+}
+
+func (self *SpiceStacksController) HandleNextPage() error {
+	delta := self.context().GetViewTrait().PageDelta()
+	return self.handlePageChange(delta)
+}
+
+func (self *SpiceStacksController) handlePageChange(delta int) error {
+	items := self.c.Model().SpiceStackItems
+	if len(items) == 0 {
+		return nil
+	}
+
+	currentIdx := self.context().GetSelectedLineIdx()
+	newIdx := currentIdx + delta
+
+	// Clamp to bounds
+	if newIdx < 0 {
+		newIdx = 0
+	}
+	if newIdx >= len(items) {
+		newIdx = len(items) - 1
+	}
+
+	// Find nearest non-commit item
+	if items[newIdx].IsCommit {
+		// Search in direction of movement first
+		if delta > 0 {
+			for i := newIdx; i < len(items); i++ {
+				if !items[i].IsCommit {
+					newIdx = i
+					break
+				}
+			}
+		} else {
+			for i := newIdx; i >= 0; i-- {
+				if !items[i].IsCommit {
+					newIdx = i
+					break
+				}
+			}
+		}
+	}
+
+	self.context().SetSelection(newIdx)
+	self.context().HandleFocus(types.OnFocusOpts{})
+	return nil
+}
+
+func (self *SpiceStacksController) HandleGotoTop() error {
+	items := self.c.Model().SpiceStackItems
+	for i := 0; i < len(items); i++ {
+		if !items[i].IsCommit {
+			self.context().SetSelection(i)
+			self.context().HandleFocus(types.OnFocusOpts{})
+			return nil
+		}
+	}
+	return nil
+}
+
+func (self *SpiceStacksController) HandleGotoBottom() error {
+	items := self.c.Model().SpiceStackItems
+	for i := len(items) - 1; i >= 0; i-- {
+		if !items[i].IsCommit {
+			self.context().SetSelection(i)
+			self.context().HandleFocus(types.OnFocusOpts{})
+			return nil
+		}
+	}
+	return nil
+}
+
+func (self *SpiceStacksController) HandleScrollLeft() error {
+	self.context().GetViewTrait().ScrollLeft()
+	return nil
+}
+
+func (self *SpiceStacksController) HandleScrollRight() error {
+	self.context().GetViewTrait().ScrollRight()
+	return nil
 }
